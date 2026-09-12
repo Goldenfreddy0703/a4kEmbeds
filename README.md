@@ -4,7 +4,7 @@ Embed / adaptive provider pack for **[Prism](https://github.com/Goldenfreddy0703
 
 Companion to [a4kScrapers](https://github.com/Goldenfreddy0703/a4kScrapers). That pack returns torrents; this one resolves host embeds to playable streams (HLS / direct).
 
-**Current version:** `0.4.0`
+**Current version:** `0.4.1`
 
 ## Install
 
@@ -20,10 +20,12 @@ No GitHub Pages or build step required — pushing to `main` is the release.
 
 ### Adaptive / embeds
 
-`AniKoto`, `Watchnixtoons2`
+`AniKoto`, `Cinejoy`, `Movy`, `Watchnixtoons2`
 
 | Provider | What it covers |
 | --- | --- |
+| **Cinejoy** | Movies and TV via Cinejoy (TMDB id, multi-server HLS) |
+| **Movy** | Movies and TV via Movy.sx (TMDB id, encrypted API, multi-city HLS) |
 | **AniKoto** | Anime episodes via anikoto + MegaPlay embeds (SUB / DUB, MAL id) |
 | **Watchnixtoons2** | Cartoons and anime from WCOStream (SUB / DUB when split) |
 
@@ -41,7 +43,7 @@ Prism checks `remote_meta` for the new version and pulls updates automatically.
 
 ```
 providers/          # Individual provider modules (one file per site)
-providerModules/    # Shared framework (core, request, embed extractors)
+providerModules/    # Shared framework (core, request, embed extractors, site APIs)
 meta.json           # Version and update URLs
 ```
 
