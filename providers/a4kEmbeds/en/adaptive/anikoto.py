@@ -15,7 +15,7 @@ from providerModules.a4kEmbeds.listitem import (
 )
 
 _REFERER = "https://anikototv.to/"
-_MEGAPLAY_MAL = "https://megaplay.buzz/stream/mal/{mal_id}/{episode}/{lang}"
+_MEGAPLAY_MAL = "https://megaplay.buzz/stream/mal/{mal_id}/{episode}/{lang}?s=tcdn"
 
 
 def _episode_number(simple_info):

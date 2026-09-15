@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import time
@@ -11,6 +12,7 @@ import urllib.parse
 from providerModules.a4kEmbeds import jsunpack
 from providerModules.a4kEmbeds import request as http
 from providerModules.a4kEmbeds.core import tools
+from providerModules.a4kEmbeds.crypto.pyaes.aes import AESModeOfOperationCBC
 
 _EDGE_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -139,19 +141,140 @@ def _megaplay_player_id(page_content):
     return match.group(1) if match else None
 
 
+_MEGAPLAY_AES_KEY = b"i?LMTAx0Q6,:}50U"
+_MEGAPLAY_AES_IV = b"W0;27ToaUpl_P%'c"
+_MEGAPLAY_STREAM_HOST = "fetch.nexabloom.top"
+_MEGAPLAY_PLAY_HEADERS = {
+    "User-Agent": "iPad",
+    "Referer": "https://megaplay.buzz/",
+    "Origin": "https://megaplay.buzz",
+}
+
+
+def _megaplay_b64url_decode(value):
+    chunk = value.replace("-", "+").replace("_", "/")
+    chunk += "=" * ((4 - len(chunk) % 4) % 4)
+    return base64.b64decode(chunk)
+
+
+def _megaplay_b64url_encode(raw):
+    if isinstance(raw, str):
+        raw = raw.encode("utf-8")
+    return base64.b64encode(raw).decode().replace("+", "-").replace("/", "_").rstrip("=")
+
+
+def _megaplay_aes_decrypt(raw):
+    key = bytearray(32)
+    key[: len(_MEGAPLAY_AES_KEY)] = _MEGAPLAY_AES_KEY
+    iv = (_MEGAPLAY_AES_IV + b"\x00" * 16)[:16]
+    aes = AESModeOfOperationCBC(bytes(key), iv)
+    out = b"".join(aes.decrypt(raw[index : index + 16]) for index in range(0, len(raw), 16))
+    pad = out[-1]
+    if 1 <= pad <= 16 and out.endswith(bytes([pad]) * pad):
+        out = out[:-pad]
+    return out
+
+
+def _megaplay_decrypt_enc(enc):
+    payload = json.loads(_megaplay_aes_decrypt(_megaplay_b64url_decode(enc)).decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("megaplay enc payload is not an object")
+    return payload
+
+
+def _megaplay_s_param(url):
+    params = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+    value = (params.get("s") or [""])[0].strip().lower()
+    if value in ("tcdn", "bcdn"):
+        return value
+    return "tcdn"
+
+
+def _megaplay_path_key(file_url):
+    marker = "/anime/"
+    if marker in file_url:
+        tail = file_url.split(marker, 1)[1]
+    else:
+        tail = file_url.split(".top/", 1)[-1]
+    return tail.replace("/master.m3u8", "").split("?", 1)[0].strip("/")
+
+
+def _megaplay_build_token(path_key):
+    return _megaplay_b64url_encode(f"{int(time.time())}|{path_key}")
+
+
+def _megaplay_pick_variant(master_text, base_url):
+    lines = (master_text or "").replace("\r\n", "\n").split("\n")
+    best_url = None
+    best_bw = -1
+    origin = "{uri.scheme}://{uri.netloc}".format(uri=urllib.parse.urlparse(base_url))
+    for index, line in enumerate(lines):
+        if not line.startswith("#EXT-X-STREAM-INF"):
+            continue
+        match = re.search(r"BANDWIDTH=(\d+)", line)
+        bandwidth = int(match.group(1)) if match else 0
+        if index + 1 >= len(lines):
+            continue
+        candidate = lines[index + 1].strip()
+        if not candidate or candidate.startswith("#"):
+            continue
+        resolved = urllib.parse.urljoin(origin + "/", candidate.lstrip("/"))
+        if bandwidth >= best_bw:
+            best_bw = bandwidth
+            best_url = resolved
+    return best_url
+
+
+def _megaplay_playback_url(file_url):
+    path_key = _megaplay_path_key(file_url)
+    token = _megaplay_build_token(path_key)
+    variant_name = "index-f1-v1-a1.m3u8"
+    response = http.get(file_url, headers=_MEGAPLAY_PLAY_HEADERS)
+    if response is not None and getattr(response, "status_code", 200) < 400:
+        variant = _megaplay_pick_variant(getattr(response, "text", "") or "", file_url)
+        if variant:
+            variant_name = variant.rsplit("/", 1)[-1].split("?", 1)[0]
+    return (
+        f"https://{_MEGAPLAY_STREAM_HOST}/anime/{path_key}/{variant_name}?token={token}"
+    )
+
+
+def _megaplay_file_url(data):
+    sources = data.get("sources")
+    file_url = None
+    if isinstance(sources, dict):
+        file_url = sources.get("file")
+    elif isinstance(sources, list) and sources:
+        file_url = sources[0].get("file")
+    if file_url:
+        return file_url
+    enc = data.get("enc")
+    if not enc:
+        return None
+    try:
+        payload = _megaplay_decrypt_enc(enc)
+    except (ValueError, TypeError, json.JSONDecodeError, KeyError):
+        return None
+    return payload.get("file")
+
+
 def _megaplay_api_data(url, page_content, referer=None):
     referer = referer or url
     player_id = _megaplay_player_id(page_content)
     if not player_id:
         return None
-    api_url = f"https://megaplay.buzz/stream/getSourcesNew?id={player_id}"
+    s_param = _megaplay_s_param(url)
+    api_url = f"https://megaplay.buzz/stream/getSourcesNew?id={player_id}&s={s_param}"
+    netloc = urllib.parse.urljoin(url, "/")
     headers = {
         "User-Agent": _FF_UA,
         "Referer": url,
         "X-Requested-With": "XMLHttpRequest",
+        "Origin": netloc.rstrip("/"),
     }
     response = http.get(api_url, headers=headers)
-    if response is None or getattr(response, "status_code", 500) >= 400:
+    status = getattr(response, "status_code", 500)
+    if response is None or status >= 400:
         return None
     try:
         return response.json()
@@ -160,16 +283,12 @@ def _megaplay_api_data(url, page_content, referer=None):
 
 
 def _megaplay_stream_url(url, data):
-    sources = data.get("sources")
-    file_url = None
-    if isinstance(sources, dict):
-        file_url = sources.get("file")
-    elif isinstance(sources, list) and sources:
-        file_url = sources[0].get("file")
+    file_url = _megaplay_file_url(data)
     if not file_url:
         return None
+    playback_url = _megaplay_playback_url(file_url)
     netloc = urllib.parse.urljoin(url, "/")
-    return file_url + _append_headers(
+    return playback_url + _append_headers(
         {"User-Agent": "iPad", "Referer": netloc, "Origin": netloc.rstrip("/")}
     )
 

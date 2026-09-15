@@ -4,7 +4,7 @@ Embed / adaptive provider pack for **[Prism](https://github.com/Goldenfreddy0703
 
 Companion to [a4kScrapers](https://github.com/Goldenfreddy0703/a4kScrapers). That pack returns torrents; this one resolves host embeds to playable streams (HLS / direct).
 
-**Current version:** `0.4.1`
+**Current version:** `0.4.2`
 
 ## Install
 
